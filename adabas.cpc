@@ -1,0 +1,1095 @@
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <malloc.h>
+#include <time.h>
+
+#ifdef SUN
+  #include <unistd.h>
+#endif
+
+
+#ifndef VSADMIN
+  #include "cgic.h"
+  #include "hfct.h"
+  #include "error.h"
+#endif
+#include "adabas.h"
+
+#ifdef WIN32
+  #include <process.h>
+  #include "win32tools.h"
+  sqldatype mysqlda[MAX_SQLSELECT];
+#endif
+
+
+EXEC SQL BEGIN DECLARE SECTION;
+  char SQLVarQueryString[8192];  
+EXEC SQL END DECLARE SECTION;
+
+
+/*--------------------------------------------------------------------------------*/
+#ifndef VSADMIN
+int GetVar(char* VarName, char* VarValue)
+{
+int Ret = 0;
+char* Value;
+char ID[21];
+
+  Value = cgiString(VarName);
+
+  if (Value == NULL)
+    {
+      if (cgiFormString("ID",ID,20) != cgiFormNotFound)
+        {
+          if ((Value = EngineDB->GetVar(ID,VarName)) != NULL)
+            {
+              strcpy(VarValue,Value);
+              Ret = 1;
+            }
+        }
+    }
+  else
+    {
+      strcpy(VarValue,Value);
+      Ret = 1;
+    }
+
+  return Ret;
+}
+#endif
+/*********************************************************************************/
+// CField
+/*********************************************************************************/
+
+CDBField::CDBField()
+{
+  strcpy(Name,"");
+  StringLength = 0;
+
+  Long = 0;
+  Double = 0;
+
+  strcpy(Date,"");
+  strcpy(Time,"");
+  strcpy(TimeStamp,"");
+
+  String = NULL;
+}
+/*--------------------------------------------------------------------------------*/
+CDBField::CDBField(char* FieldName)
+{
+  strcpy(Name, FieldName);
+  Name[strcspn(Name," ")] = '\0';
+  StringLength = 0;
+
+  Long = 0;
+  Double = 0;
+
+  strcpy(Date,"");
+  strcpy(Time,"");
+  strcpy(TimeStamp,"");
+
+  String = NULL;
+}
+/*--------------------------------------------------------------------------------*/
+CDBField::CDBField(char* FieldName, int NewStringLength)
+{
+  strcpy(Name, FieldName);
+  Name[strcspn(Name," ")] = '\0';
+  StringLength = 0;
+
+  Long = 0;
+  Double = 0;
+
+  strcpy(Date,"");
+  strcpy(Time,"");
+  strcpy(TimeStamp,"");
+
+  String = (char*) malloc(NewStringLength+1);
+  StringLength = NewStringLength;
+
+  memset (String, '\0', StringLength);
+
+}
+/*--------------------------------------------------------------------------------*/
+CDBField::~CDBField()
+{
+  if ((Type == FT_STRING) || (Type == FT_MEMO))
+    free(String);
+}
+/*********************************************************************************/
+// CDBFieldList
+/*********************************************************************************/
+CDBFieldList::CDBFieldList()
+{
+  Items = new _Item;
+  Items->Element = NULL;
+  Items->Next = NULL;
+  p = Items; 
+}
+/*--------------------------------------------------------------------------------*/
+CDBFieldList::~CDBFieldList()
+{
+  Clear();
+
+  delete Items; 
+}
+/*--------------------------------------------------------------------------------*/
+void CDBFieldList::Add(CDBField* Item) 
+{
+  while (p->Next != NULL) 
+    p = p->Next; 
+
+  p->Next = new _Item; 
+  p = p->Next; 
+  p->Element = Item;
+  p->Next = NULL; 
+}
+/*--------------------------------------------------------------------------------*/
+void CDBFieldList::Clear()
+{
+_Item *tmp;
+  
+  p = Items;
+
+  while (Items->Next!=NULL)
+	{
+      if (p->Next != NULL)   
+        {         
+	      tmp = p->Next; 
+          p->Next = (p->Next)->Next;         
+		  delete tmp->Element;
+	      delete tmp;  
+		}
+	}
+}
+/*--------------------------------------------------------------------------------*/  
+CDBField* CDBFieldList::Seek(char* Name)
+{  
+  p = Items;
+
+  while(p->Next != NULL)
+	{
+	  if (strcasecmp(p->Next->Element->Name, Name) == 0)
+        return p->Next->Element;
+
+	  p = p->Next;
+	}
+
+  return NULL;
+}
+/*--------------------------------------------------------------------------------*/  
+CDBField* CDBFieldList::Seek(int Index)
+{
+int Counter = 1;
+
+  p = Items;
+
+  while(p->Next != NULL)
+	{
+	  if (Index == Counter)
+        return p->Next->Element;
+
+	  Counter++;
+	  p = p->Next;
+	}
+
+  return NULL;
+}
+/*--------------------------------------------------------------------------------*/  
+CDBField* CDBFieldList::GetFirstItem()
+{
+  p = Items;
+
+  if (p->Next != NULL)
+	{
+      return p->Next->Element;
+	}
+  else
+	return NULL;
+}
+/*--------------------------------------------------------------------------------*/  
+CDBField* CDBFieldList::GetItem()
+{
+  if (p->Next != NULL)
+	{
+	  return p->Next->Element;
+	}
+  else
+	return NULL;
+}
+/*--------------------------------------------------------------------------------*/  
+CDBField* CDBFieldList::GetNextItem()
+{
+
+  p = p->Next;
+  if (p->Next != NULL)
+	{
+      return p->Next->Element;
+	}
+  else
+	return NULL;
+}
+/*--------------------------------------------------------------------------------*/  
+void CDBFieldList::SetNull()
+{  
+
+return;
+
+  p = Items;
+
+
+  while(p->Next != NULL)
+	{
+      switch (((CDBField*) p->Next->Element)->Type)
+		{
+		  case FT_STRING:
+		  case FT_MEMO:
+			memset (((CDBField*)p->Next->Element)->String, '\0', ((CDBField*)p->Next->Element)->StringLength);
+			break;
+		  case FT_LONG :
+ 		  case FT_BOOLEAN :
+			memset (&((CDBField*)p->Next->Element)->Long, '\0', sizeof(((CDBField*)p->Next->Element)->Long));
+			break;
+		  case FT_DOUBLE : 
+			memset (&((CDBField*)p->Next->Element)->Double, '\0', sizeof(((CDBField*)p->Next->Element)->Double));
+			break;
+		  case FT_DATE : 
+			memset (&((CDBField*)p->Next->Element)->Date, '\0', sizeof(((CDBField*)p->Next->Element)->Date));
+			break;
+		  case FT_TIME : 
+			memset (&((CDBField*)p->Next->Element)->Time, '\0', sizeof(((CDBField*)p->Next->Element)->Time));
+			break;
+		  case FT_TIMESTAMP : 
+			memset (&((CDBField*)p->Next->Element)->TimeStamp, '\0', sizeof(((CDBField*)p->Next->Element)->TimeStamp));
+			break;
+		}
+
+	  p = p->Next;
+	}
+}
+/*********************************************************************************/
+// CAdabas
+/*********************************************************************************/
+CEngineDB::CEngineDB()
+{
+int Counter;
+
+  EXEC SQL WHENEVER SQLERROR CALL SQLError();
+
+  for (Counter = 0; Counter < MAX_SQLSELECT; Counter++)
+	{
+      mysqlda[Counter].sqlmax = MAX_SQLVAR;
+	  Row[Counter] = 0;
+	  NumRows[Counter] = 0;
+	  EndOfFile[Counter] = 0;
+	}
+}
+/*--------------------------------------------------------------------------------*/
+void CEngineDB::SQLError()
+{
+#ifndef VSADMIN
+  RuntimeError4(sqlca.sqlerrmc,SQLVarQueryString);
+#endif
+/*
+#else
+  printf("%s\n%s\n",sqlca.sqlerrmc,SQLVarQueryString);
+#endif
+*/
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::Connect(char* ServerDB, char* Username, char* Password, char* Servernode)
+{
+EXEC SQL BEGIN DECLARE SECTION;
+  char SQLVarServerDB[40];
+  char SQLVarUsername[40];
+  char SQLVarPassword[40];
+  char SQLVarServernode[40];
+EXEC SQL END DECLARE SECTION;
+
+  strcpy(SQLVarServerDB,ServerDB);
+  strcpy(SQLVarUsername,Username);
+  strcpy(SQLVarPassword,Password);
+  strcpy(SQLVarServernode,Servernode);
+
+  sprintf(SQLVarQueryString,"DB: %s NODE: %s USER: %s PW: ***",
+          SQLVarServerDB,SQLVarServernode,SQLVarUsername);
+
+  EXEC SQL WHENEVER SQLERROR CONTINUE;
+
+  EXEC SQL SET SERVERDB :SQLVarServerDB ON :SQLVarServernode;
+
+  EXEC SQL CONNECT :SQLVarUsername IDENTIFIED BY :SQLVarPassword;
+
+  EXEC SQL WHENEVER SQLERROR CALL SQLError();
+
+  return (sqlca.sqlcode == 0);
+}
+/*--------------------------------------------------------------------------------*/
+void CEngineDB::Commit()
+{
+  EXEC SQL COMMIT WORK;
+}
+/*--------------------------------------------------------------------------------*/
+CEngineDB::~CEngineDB()
+{
+  EXEC SQL COMMIT WORK RELEASE;
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::CreateSession(char* ID)
+{
+char Date[9];
+char Time[7];
+time_t TimeT;
+tm* Today;
+char Referer[500];
+
+  time(&TimeT);
+
+  Today = localtime(&TimeT);
+
+  sprintf(Date,"%i%.2i%.2i",Today->tm_year+1900,Today->tm_mon+1,Today->tm_mday);
+  sprintf(Time,"%.2i%.2i%.2i",Today->tm_hour,Today->tm_min,Today->tm_sec);
+
+#ifndef VSADMIN
+  strcpy(Referer,cgiReferer);
+  strcat(Referer,"");
+
+
+  sprintf(SQLVarQueryString,"insert into SESSIONS (INDEX,ENTRYTIME,LASTUSAGE,REFERER,TOTALPAGES,USERIP,GATEWAY,OLD,CUSTOMERID) values ('%s','%s%s','%s%s','%s',1,'%s','%s',FALSE,'0')",
+    ID,Date,Time,Date,Time,Referer,cgiRemoteAddr,cgiRemoteHost);
+
+
+  EXEC SQL WHENEVER SQLERROR CONTINUE;
+
+  EXEC SQL PREPARE SQLCreateSession FROM :SQLVarQueryString;
+
+  EXEC SQL EXECUTE SQLCreateSession;
+
+  sprintf(SQLVarQueryString,"insert into SESSIONVAR (INDEX,NAME,VALUE) values ('%s','LOGIN','ANONYM')",ID);
+
+  EXEC SQL PREPARE SQLCreateSession2 FROM :SQLVarQueryString;
+
+  EXEC SQL EXECUTE SQLCreateSession2;
+
+  strcpy(SQLVarQueryString,"");
+
+#endif 
+
+
+  EXEC SQL WHENEVER SQLERROR CALL SQLError();
+
+  return sqlca.sqlcode;
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::UpdateSession(char* ID)
+{
+char Date[9];
+char Time[6];
+time_t TimeT;
+tm* Today;
+CDBField* DBField;
+
+  time(&TimeT);
+
+  Today = localtime(&TimeT);
+
+  sprintf(Date,"%i%.2i%.2i",Today->tm_year+1900,Today->tm_mon+1,Today->tm_mday);
+  sprintf(Time,"%.2i%.2i%.2i",Today->tm_hour,Today->tm_min,Today->tm_sec);
+
+  sprintf(SQLVarQueryString,"select TOTALPAGES from SESSIONS WHERE INDEX='%s' AND OLD=FALSE",ID);
+
+
+      if (SQLSelect(MAX_SQLSELECT-1,SQLVarQueryString))
+	    {
+
+          DBField = GetField(MAX_SQLSELECT-1,1);
+  
+          if (DBField != NULL)
+	        {
+              DBField->Long++;
+              sprintf(SQLVarQueryString,"update SESSIONS set LASTUSAGE='%s%s',TOTALPAGES=%i where INDEX='%s' ", Date,Time,DBField->Long,ID);
+              EXEC SQL PREPARE SQLUpdateSessionUpdate FROM :SQLVarQueryString;
+              EXEC SQL EXECUTE SQLUpdateSessionUpdate;
+			}
+    	}
+	  if (sqlca.sqlcode == 100)
+            return 0;
+          else
+            return 1;
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::UpdateVar(char* ID,char* VarName,char* VarValue)
+{
+
+  EXEC SQL WHENEVER SQLERROR CONTINUE;
+  
+  sprintf(SQLVarQueryString,"update SESSIONVAR set VALUE='%s' where INDEX='%s' and  NAME='%s'",VarValue,ID,VarName);
+
+  EXEC SQL PREPARE SQLUpdateVar FROM :SQLVarQueryString;
+
+  EXEC SQL EXECUTE SQLUpdateVar;
+
+  EXEC SQL WHENEVER SQLERROR CALL SQLError();
+
+  return (sqlca.sqlcode == 0);
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::InsertVar(char* ID,char* VarName,char* VarValue)
+{
+  if (strlen(VarValue) < 150)
+	{
+      sprintf(SQLVarQueryString,"insert into SESSIONVAR (INDEX,NAME,VALUE) values ('%s','%s','%s')",ID,VarName,VarValue);
+
+      EXEC SQL PREPARE SQLInsertVar FROM :SQLVarQueryString;
+
+      EXEC SQL EXECUTE SQLInsertVar;
+
+      return (sqlca.sqlcode == 0);
+	}
+  else
+	return 0;
+}
+/*--------------------------------------------------------------------------------*/
+char* CEngineDB::GetVar(char* ID,char* VarName)
+{
+CDBField* DBField;
+
+  sprintf(SQLVarQueryString,"select VALUE from SESSIONVAR where INDEX='%s' AND NAME='%s'",ID,VarName);
+
+  SQLSelect(MAX_SQLSELECT-2,SQLVarQueryString);
+
+  DBField = GetField(MAX_SQLSELECT-2,1);
+  
+  if (sqlca.sqlcode != 0)
+	return NULL;
+
+  return DBField->String;
+}
+/*--------------------------------------------------------------------------------*/
+void CEngineDB::DescribeFields(int Index)
+{
+int FieldCounter;
+CDBField* DBField;
+
+  DBFieldList[Index].Clear();
+
+  for (FieldCounter = 0; FieldCounter < mysqlda[Index].sqln; FieldCounter++)
+    {
+
+// printf("Describe: %s -",mysqlda[Index].sqlvar[FieldCounter].colname);
+
+      switch(mysqlda[Index].sqlvar[FieldCounter].coltype)
+        {
+          case 0:
+		  case 3:
+		  case 12:
+		  case 15:
+		  case 16:
+		  case 19:
+		  case 20:
+            DBField = new CDBField(mysqlda[Index].sqlvar[FieldCounter].colname);
+            DBField->Type = FT_LONG;
+            mysqlda[Index].sqlvar[FieldCounter].hostvartype = 1;
+            mysqlda[Index].sqlvar[FieldCounter].hostvaraddr = &(DBField->Long);
+			mysqlda[Index].sqlvar[FieldCounter].hostindaddr = &(DBField->Indicator);
+            break;
+		  case 23:
+            DBField = new CDBField(mysqlda[Index].sqlvar[FieldCounter].colname);
+            DBField->Type = FT_BOOLEAN;
+            mysqlda[Index].sqlvar[FieldCounter].hostvartype = 1;
+            mysqlda[Index].sqlvar[FieldCounter].hostvaraddr = &(DBField->Long);
+			mysqlda[Index].sqlvar[FieldCounter].hostindaddr = &(DBField->Indicator);
+            break;
+ 
+          case 1:
+		  case 7:
+            DBField = new CDBField(mysqlda[Index].sqlvar[FieldCounter].colname);
+            DBField->Type = FT_DOUBLE;
+            mysqlda[Index].sqlvar[FieldCounter].hostvartype = 3;
+            mysqlda[Index].sqlvar[FieldCounter].hostvaraddr = &(DBField->Double);
+			mysqlda[Index].sqlvar[FieldCounter].hostindaddr = &(DBField->Indicator);
+            break;
+
+          case 2:
+		  case 17:
+		  case 18:
+            DBField = new CDBField(mysqlda[Index].sqlvar[FieldCounter].colname,
+                                   mysqlda[Index].sqlvar[FieldCounter].collength);
+            DBField->Type = FT_STRING;
+            mysqlda[Index].sqlvar[FieldCounter].hostvartype = 7;
+            mysqlda[Index].sqlvar[FieldCounter].hostvaraddr = DBField->String;
+            mysqlda[Index].sqlvar[FieldCounter].hostindaddr = &(DBField->Indicator);
+            break;
+
+ 		  case 11:
+            DBField = new CDBField(mysqlda[Index].sqlvar[FieldCounter].colname,
+                                   mysqlda[Index].sqlvar[FieldCounter].collength);
+            DBField->Type = FT_MEMO;
+            mysqlda[Index].sqlvar[FieldCounter].hostvartype = 7;
+            mysqlda[Index].sqlvar[FieldCounter].hostvaraddr = DBField->String;
+			mysqlda[Index].sqlvar[FieldCounter].hostindaddr = &(DBField->Indicator);
+            break;
+
+          case 4:
+            DBField = new CDBField(mysqlda[Index].sqlvar[FieldCounter].colname);
+            DBField->Type = FT_DATE;
+            mysqlda[Index].sqlvar[FieldCounter].hostvartype = 7;
+            mysqlda[Index].sqlvar[FieldCounter].hostvaraddr = DBField->Date;
+			mysqlda[Index].sqlvar[FieldCounter].hostindaddr = &(DBField->Indicator);
+            break;
+
+          case 5:
+            DBField = new CDBField(mysqlda[Index].sqlvar[FieldCounter].colname);
+            DBField->Type = FT_TIME;
+            mysqlda[Index].sqlvar[FieldCounter].hostvartype = 7;
+            mysqlda[Index].sqlvar[FieldCounter].hostvaraddr = DBField->Time;
+			mysqlda[Index].sqlvar[FieldCounter].hostindaddr = &(DBField->Indicator);
+            break;
+
+          case 8:
+            DBField = new CDBField(mysqlda[Index].sqlvar[FieldCounter].colname);
+            DBField->Type = FT_TIMESTAMP;
+            mysqlda[Index].sqlvar[FieldCounter].hostvartype = 7;
+            mysqlda[Index].sqlvar[FieldCounter].hostvaraddr = DBField->TimeStamp;
+			mysqlda[Index].sqlvar[FieldCounter].hostindaddr = &(DBField->Indicator);
+            break;
+
+          default:
+            DBField = new CDBField(mysqlda[Index].sqlvar[FieldCounter].colname);
+            DBField->Type = FT_UNKNOWN;
+            break;
+        }
+      DBFieldList[Index].Add(DBField);
+    }
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::SQLSelect(int Index, char* SQLString)
+{
+  strcpy(SQLVarQueryString,SQLString);
+
+  Row[Index] = 0;
+
+  //printf("Select(%i): %s ",Index,SQLVarQueryString);
+
+  switch(Index)
+	{
+	  case 0:
+		EXEC SQL PREPARE SQLSelect0 FROM :SQLVarQueryString;
+        EXEC SQL EXECUTE SQLSelect0;
+		EXEC SQL PREPARE SQLFet0 FROM 'fetch using descriptor &mysqlda[Index]';
+        EXEC SQL DESCRIBE SQLFet0 INTO &mysqlda[Index];
+        DescribeFields(Index);
+		EXEC SQL DECLARE SQLCursor0 CURSOR FOR SQLSelect0; 
+		EXEC SQL OPEN SQLCursor0;
+		GetFirst(Index);
+		break;
+	  case 1:
+		EXEC SQL PREPARE SQLSelect1 FROM :SQLVarQueryString;
+        EXEC SQL EXECUTE SQLSelect1;
+		EXEC SQL PREPARE SQLFet1 FROM 'fetch using descriptor &mysqlda[Index]';
+        EXEC SQL DESCRIBE SQLFet1 INTO &mysqlda[Index];
+        DescribeFields(Index);
+		EXEC SQL DECLARE SQLCursor1 CURSOR FOR SQLSelect1; 
+		EXEC SQL OPEN SQLCursor1;
+		GetFirst(Index);
+		break;
+	  case 2:
+		EXEC SQL PREPARE SQLSelect2 FROM :SQLVarQueryString;
+        EXEC SQL EXECUTE SQLSelect2;
+		EXEC SQL PREPARE SQLFet2 FROM 'fetch using descriptor &mysqlda[Index]';
+        EXEC SQL DESCRIBE SQLFet2 INTO &mysqlda[Index];
+        DescribeFields(Index);
+		EXEC SQL DECLARE SQLCursor2 CURSOR FOR SQLSelect2; 
+		EXEC SQL OPEN SQLCursor2;
+		GetFirst(Index);
+		break;
+	  case 3:
+		EXEC SQL PREPARE SQLSelect3 FROM :SQLVarQueryString;
+        EXEC SQL EXECUTE SQLSelect3;
+		EXEC SQL PREPARE SQLFet3 FROM 'fetch using descriptor &mysqlda[Index]';
+        EXEC SQL DESCRIBE SQLFet3 INTO &mysqlda[Index];
+        DescribeFields(Index);
+		EXEC SQL DECLARE SQLCursor3 CURSOR FOR SQLSelect3; 
+		EXEC SQL OPEN SQLCursor3;
+		GetFirst(Index);
+		break;
+  	  case 4:
+		EXEC SQL PREPARE SQLSelect4 FROM :SQLVarQueryString;
+        EXEC SQL EXECUTE SQLSelect4;
+		EXEC SQL PREPARE SQLFet4 FROM 'fetch using descriptor &mysqlda[Index]';
+        EXEC SQL DESCRIBE SQLFet4 INTO &mysqlda[Index];
+        DescribeFields(Index);
+		EXEC SQL DECLARE SQLCursor4 CURSOR FOR SQLSelect4; 
+		EXEC SQL OPEN SQLCursor4;
+		GetFirst(Index);
+		break;
+      case 5:
+		EXEC SQL PREPARE SQLSelect5 FROM :SQLVarQueryString;
+        EXEC SQL EXECUTE SQLSelect5;
+		EXEC SQL PREPARE SQLFet5 FROM 'fetch using descriptor &mysqlda[Index]';
+        EXEC SQL DESCRIBE SQLFet5 INTO &mysqlda[Index];
+        DescribeFields(Index);
+		EXEC SQL DECLARE SQLCursor5 CURSOR FOR SQLSelect5; 
+		EXEC SQL OPEN SQLCursor5;
+		GetFirst(Index);
+		break;
+	}
+
+  NumRows[Index] = sqlca.sqlerrd[2];
+
+  return (sqlca.sqlcode == 0);
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::SQLUpdate(char* SQLString)
+{
+
+  strcpy(SQLVarQueryString,SQLString);
+
+  //printf("<B>Update : %s</B><BR>",SQLVarQueryString);
+
+  EXEC SQL PREPARE SQLUpdate FROM :SQLVarQueryString;
+
+  EXEC SQL EXECUTE SQLUpdate;
+  return (sqlca.sqlcode == 0);
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::SQL(char* SQLString)
+{
+
+  strcpy(SQLVarQueryString,SQLString);
+
+  //printf("<B>Update : %s</B><BR>",SQLVarQueryString);
+
+
+  EXEC SQL PREPARE SQL FROM :SQLVarQueryString;
+
+  EXEC SQL EXECUTE SQL;
+
+  return (sqlca.sqlcode == 0);
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::SQLInsert(char* SQLString,char* ID)
+{
+long t;
+#ifndef HPUX
+long c;
+#endif
+
+  time(&t); 
+
+#ifndef HPUX
+	
+	#ifdef WIN32
+	  c=_getpid() % 100;
+	#else
+	  c=getpid() % 100;
+	#endif
+
+    sprintf(ID,"%ld%ld",t,c);
+#else
+    sprintf(ID,"%ld",t);
+
+#endif
+
+  do	  
+	{
+      sprintf(SQLVarQueryString,"insert into %s (Index) values ('%s')",SQLString,ID);
+
+      EXEC SQL PREPARE SQLInsert FROM :SQLVarQueryString;
+
+      EXEC SQL EXECUTE SQLInsert;
+
+	  if (sqlca.sqlcode == 200)
+		{
+		  t += 1;
+              #ifndef HPUX
+                sprintf(ID,"%ld%ld",t,c);
+              #else
+                sprintf(ID,"%ld",t);
+              #endif
+
+		}
+	}
+  while(sqlca.sqlcode == 200);
+
+  return (sqlca.sqlcode == 0);
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::SQLCreate(char* TableName,char* OldTable)
+{
+int Ret;
+
+  sprintf(SQLVarQueryString,"create table %s like %s",TableName,OldTable);
+
+  EXEC SQL PREPARE SQLCreate FROM :SQLVarQueryString;
+
+  EXEC SQL EXECUTE SQLCreate;
+
+  Ret = (sqlca.sqlcode == 0);
+
+  return Ret;
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::SQLDrop(char* TableName)
+{
+int Ret;
+
+  sprintf(SQLVarQueryString,"drop table %s",TableName);
+
+  EXEC SQL PREPARE SQLDrop FROM :SQLVarQueryString;
+
+  EXEC SQL EXECUTE SQLDrop;
+
+  Ret = (sqlca.sqlcode == 0);
+
+  return Ret;
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::SQLDelete(char* TableName, char* Index)
+{
+int Ret;
+
+  sprintf(SQLVarQueryString,"delete from %s where INDEX='%s'",TableName,Index);
+
+  EXEC SQL PREPARE SQLDelete FROM :SQLVarQueryString;
+
+  EXEC SQL EXECUTE SQLDelete;
+
+  Ret = (sqlca.sqlcode == 0);
+
+  return Ret;
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::IsEOF(int SelectIndex)
+{
+  /*printf("<B>EOF : %i - %i</B><BR>",SelectIndex,EndOfFile[SelectIndex]);*/
+  
+  return EndOfFile[SelectIndex];
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::GetFirst(int SelectIndex)
+{
+  
+  DBFieldList[SelectIndex].SetNull();
+
+  switch(SelectIndex)
+	{
+	  case 0:
+		EXEC SQL FETCH FIRST SQLCursor0 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 1:
+		EXEC SQL FETCH FIRST SQLCursor1 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 2:
+		EXEC SQL FETCH FIRST SQLCursor2 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 3:
+		EXEC SQL FETCH FIRST SQLCursor3 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 4:
+		EXEC SQL FETCH FIRST SQLCursor4 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 5:
+		EXEC SQL FETCH FIRST SQLCursor5 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+    }
+
+  if (sqlca.sqlcode == 0)
+	{
+      EndOfFile[SelectIndex] = 0; 
+      Row[SelectIndex] = 1;
+	  return 1;
+	}
+  else
+	{
+      EndOfFile[SelectIndex] = 1; 
+	  return 0;
+	}
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::GetLast(int SelectIndex)
+{
+
+  DBFieldList[SelectIndex].SetNull();
+
+  switch(SelectIndex)
+	{
+	  case 0:
+		EXEC SQL FETCH LAST SQLCursor0 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 1:
+		EXEC SQL FETCH LAST SQLCursor1 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 2:
+		EXEC SQL FETCH LAST SQLCursor2 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 3:
+		EXEC SQL FETCH LAST SQLCursor3 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 4:
+		EXEC SQL FETCH LAST SQLCursor4 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 5:
+		EXEC SQL FETCH LAST SQLCursor5 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+    }
+
+  if (sqlca.sqlcode == 0)
+	{
+      EndOfFile[SelectIndex] = 1; 
+      Row[SelectIndex] = NumRows[SelectIndex];
+	  return 1;
+	}
+  else
+	{
+      EndOfFile[SelectIndex] = 1; 
+	  return 0;
+	}
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::GetNext(int SelectIndex)
+{
+
+  DBFieldList[SelectIndex].SetNull();
+
+  switch(SelectIndex)
+	{
+	  case 0:
+		EXEC SQL FETCH NEXT SQLCursor0 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 1:
+		EXEC SQL FETCH NEXT SQLCursor1 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 2:
+		EXEC SQL FETCH NEXT SQLCursor2 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 3:
+		EXEC SQL FETCH NEXT SQLCursor3 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 4:
+		EXEC SQL FETCH NEXT SQLCursor4 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 5:
+		EXEC SQL FETCH NEXT SQLCursor5 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+    }
+
+  if (sqlca.sqlcode == 0)
+	{
+      EndOfFile[SelectIndex] = 0; 
+      Row[SelectIndex]++;
+	  return 1;
+	}
+  else
+	{
+      EndOfFile[SelectIndex] = 1; 
+	  return 0;
+	}
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::GetPrev(int SelectIndex)
+{
+
+  DBFieldList[SelectIndex].SetNull();
+
+  switch(SelectIndex)
+	{
+	  case 0:
+		EXEC SQL FETCH PREV SQLCursor0 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 1:
+		EXEC SQL FETCH PREV SQLCursor1 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 2:
+		EXEC SQL FETCH PREV SQLCursor2 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 3:
+		EXEC SQL FETCH PREV SQLCursor3 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 4:
+		EXEC SQL FETCH PREV SQLCursor4 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+	  case 5:
+		EXEC SQL FETCH PREV SQLCursor5 USING DESCRIPTOR &mysqlda[SelectIndex];
+		break;
+    }
+
+  if (sqlca.sqlcode == 0)
+	{
+      EndOfFile[SelectIndex] = 0; 
+      Row[SelectIndex]--;
+	  return 1;
+	}
+  else
+	{
+	  return 0;
+	}
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::GetAt(int SelectIndex, int Position)
+{
+EXEC SQL BEGIN DECLARE SECTION;
+  int XXX;  
+EXEC SQL END DECLARE SECTION;
+
+
+  DBFieldList[SelectIndex].SetNull();
+  XXX = Position;
+
+  switch(SelectIndex)
+	{
+	  case 0:
+/*
+		EXEC SQL FETCH POS (:XXX ) SQLCursor0 USING DESCRIPTOR &mysqlda[SelectIndex];
+*/
+/*
+
+		strcpy(SQLVarQueryString,"FETCH POS (?) SQLCursor0 USING DESCRIPTOR &mysqlda[SelectIndex]");
+		EXEC SQL PREPARE SQLGETAT0 FROM :SQLVarQueryString;
+		EXEC SQL EXECUTE SQLGETAT0 USING :Pos;
+
+		sprintf(SQLVarQueryString,"FETCH POS %i SQLCursor0 USING DESCRIPTOR &mysqlda[SelectIndex]",Position);
+		EXEC SQL PREPARE SQLGETAT0 FROM :SQLVarQueryString;
+		EXEC SQL EXECUTE SQLGETAT0;
+*/
+		break;
+	  case 1:
+		sprintf(SQLVarQueryString,"FETCH POS %i SQLCursor1 USING DESCRIPTOR &mysqlda[SelectIndex]",Position);
+		EXEC SQL PREPARE SQLGETAT1 FROM :SQLVarQueryString;
+		EXEC SQL EXECUTE SQLGETAT1;
+		break;
+	  case 2:
+		sprintf(SQLVarQueryString,"FETCH POS %i SQLCursor2 USING DESCRIPTOR &mysqlda[SelectIndex]",Position);
+		EXEC SQL PREPARE SQLGETAT2 FROM :SQLVarQueryString;
+		EXEC SQL EXECUTE SQLGETAT2;
+		break;
+	  case 3:
+		sprintf(SQLVarQueryString,"FETCH POS %i SQLCursor3 USING DESCRIPTOR &mysqlda[SelectIndex]",Position);
+		EXEC SQL PREPARE SQLGETAT3 FROM :SQLVarQueryString;
+		EXEC SQL EXECUTE SQLGETAT3;
+		break;
+	  case 4:
+		sprintf(SQLVarQueryString,"FETCH POS %i SQLCursor4 USING DESCRIPTOR &mysqlda[SelectIndex]",Position);
+		EXEC SQL PREPARE SQLGETAT4 FROM :SQLVarQueryString;
+		EXEC SQL EXECUTE SQLGETAT4;
+		break;
+	  case 5:
+		strcpy(SQLVarQueryString,"FETCH POS ? SQLCursor5 USING DESCRIPTOR &mysqlda[SelectIndex]");
+		EXEC SQL PREPARE SQLGETAT5 FROM :SQLVarQueryString;
+		//EXEC SQL EXECUTE SQLGETAT5 USING :Pos;
+		/* USING DESCRIPTOR &mysqlda[SelectIndex];*/
+/*
+		sprintf(SQLVarQueryString,"FETCH POS %i SQLCursor5 USING DESCRIPTOR &mysqlda[SelectIndex]",Position);
+		EXEC SQL PREPARE SQLGETAT5 FROM :SQLVarQueryString;
+		EXEC SQL EXECUTE SQLGETAT5;
+*/
+		break;
+    }
+
+  if (sqlca.sqlcode == 0)
+	{
+      EndOfFile[SelectIndex] = 0; 
+      Row[SelectIndex] = Position;
+	  return 1;
+	}
+  else
+	{
+	  EndOfFile[SelectIndex] = 1; 
+	  return 0;
+	}
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::GetCurrentRow(int SelectIndex)
+{
+  return Row[SelectIndex];
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::GetNumRows(int SelectIndex)
+{
+  return NumRows[SelectIndex];
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::GetNumCols(int SelectIndex)
+{
+  return mysqlda[SelectIndex].sqln;
+}
+/*--------------------------------------------------------------------------------*/
+CDBField* CEngineDB::GetField(int SelectIndex, char* FieldName)
+{
+
+  return DBFieldList[SelectIndex].Seek(FieldName);
+}
+/*--------------------------------------------------------------------------------*/
+CDBField* CEngineDB::GetField(int SelectIndex, int Index)
+{
+  return DBFieldList[SelectIndex].Seek(Index);
+}
+/*--------------------------------------------------------------------------------*/
+CDBField* CEngineDB::GetFirstField(int SelectIndex)
+{
+  return DBFieldList[SelectIndex].GetFirstItem();
+}
+/*--------------------------------------------------------------------------------*/
+CDBField* CEngineDB::GetNextField(int SelectIndex)
+{
+  return DBFieldList[SelectIndex].GetNextItem();
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::GetFirstListField(char* Category,char* ColumnName,
+                                       char* Name, char* Value)
+{
+
+CDBField* ListField;
+
+  strcpy(SQLVarQueryString,"SELECT LISTS.INDEX,LISTS.CATEGORY, LISTS.COLUMNNAME, LISTITEMS.LISTINDEX, LISTITEMS.NAME, ");
+  strcat(SQLVarQueryString,"LISTITEMS.VALUE FROM LISTS,LISTITEMS WHERE");
+  strcat(SQLVarQueryString,"(LISTS.INDEX = LISTITEMS.LISTINDEX) AND (LISTS.CATEGORY='");
+  strcat(SQLVarQueryString,Category);
+  strcat(SQLVarQueryString,"') AND (LISTS.COLUMNNAME='");
+  strcat(SQLVarQueryString,ColumnName);
+  strcat(SQLVarQueryString,"')");
+
+  if (SQLSelect(MAX_SQLSELECT-1,SQLVarQueryString) == 0)
+	return 0;
+
+  if ((ListField = GetField(MAX_SQLSELECT-1,5)) != NULL)
+	{
+	  strcpy(Name,ListField->String);
+
+      if ((ListField = GetField(MAX_SQLSELECT-1,6)) != NULL)
+	    {
+		  strcpy(Value,ListField->String);
+
+          return 1;
+		}
+	 }
+
+  return 0;
+}
+/*--------------------------------------------------------------------------------*/
+int CEngineDB::GetNextListField(char* Name, char* Value)
+{
+CDBField* ListField;
+
+  if (GetNext(MAX_SQLSELECT-1) == 0)
+	return 0;
+
+  if ((ListField = GetField(MAX_SQLSELECT-1,5)) != NULL)
+	{
+	  strcpy(Name,ListField->String);
+
+      if ((ListField = GetField(MAX_SQLSELECT-1,6)) != NULL)
+	    {
+		  strcpy(Value,ListField->String);
+
+          return 1;
+		}
+	 }
+
+  return 0;
+}
+/*--------------------------------------------------------------------------------*/
+
+CEngineDB* EngineDB;
